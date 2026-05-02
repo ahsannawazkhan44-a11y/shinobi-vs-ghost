@@ -1,0 +1,24 @@
+<?xml version='1.0' encoding='utf-8'?>
+<widget id="com.coderop.ninjasaga" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+    <name>Ninja Saga Pro</name>
+    <description>
+        An epic ninja platformer adventure.
+    </description>
+    <author email="dev@example.com" href="http://example.com">
+        CODER OP
+    </author>
+    
+    <content src="index.html" />
+    
+    <access origin="*" />
+    <allow-intent href="http://*/*" />
+    <allow-intent href="https://*/*" />
+    
+    <platform name="android">
+        <preference name="Fullscreen" value="true" />
+        <preference name="Orientation" value="landscape" />
+        <preference name="BackgroundColor" value="0xff000000" />
+    </platform>
+
+    <plugin name="cordova-plugin-whitelist" spec="1" />
+</widget>

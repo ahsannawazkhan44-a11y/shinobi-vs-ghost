@@ -1,0 +1,226 @@
+()<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Ninja Saga - Brutal Edition</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+        body, html { width: 100%; height: 100%; overflow: hidden; background-color: #000; touch-action: none; font-family: 'Segoe UI', sans-serif; }
+        .screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; }
+        #loading-screen { display: flex; justify-content: center; align-items: center; z-index: 50; background: url('img/load.png') no-repeat center center; background-size: 100% 100%; }
+        #start-btn { width: 140px; cursor: pointer; transition: 0.2s; }
+        #home-screen { background: url('img/homepage.png') no-repeat center center; background-size: 100% 100%; z-index: 40; }
+        .hitbox { position: absolute; background: transparent; border: none; cursor: pointer; }
+        #play-btn { left: 35%; top: 48%; width: 30%; height: 10%; }
+        #chapter-menu { background: #1a1a1a url('img/chapter_select.png') no-repeat center center; background-size: 100% 100%; z-index: 30; }
+        #ch1-btn { left: 19%; top: 82%; width: 17%; height: 9%; }
+        #ch2-btn { left: 41%; top: 82%; width: 17%; height: 9%; }
+        #ch3-btn { left: 64%; top: 82%; width: 17%; height: 9%; }
+        #game-container { z-index: 20; }
+        canvas { display: block; image-rendering: pixelated; width: 100%; height: 100%; }
+        #ui-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 25; }
+        #touch-controls { position: absolute; bottom: 25px; left: 0; width: 100%; padding: 0 30px; display: flex; justify-content: space-between; pointer-events: none; }
+        .joystick-area, .action-area { display: flex; gap: 15px; pointer-events: auto; }
+        .touch-btn { width: 65px; height: 65px; background: rgba(0,0,0,0.6); border: 2px solid #fff; border-radius: 50%; color: white; display: flex; justify-content: center; align-items: center; font-weight: bold; }
+        .atk-btn { background: rgba(192, 57, 43, 0.7); }
+        .popup-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; justify-content: center; align-items: center; z-index: 100; }
+        .home-btn { padding: 12px 35px; background: #f1c40f; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div id="loading-screen" class="screen" style="display: flex;"><img src="img/start.png" id="start-btn" onclick="enterHome()"></div>
+    <div id="home-screen" class="screen"><button class="hitbox" id="play-btn" onclick="openChapterMenu()"></button></div>
+    <div id="chapter-menu" class="screen"><button class="hitbox" id="ch1-btn" onclick="startChapter(1)"></button><button class="hitbox" id="ch2-btn" onclick="startChapter(2)"></button><button class="hitbox" id="ch3-btn" onclick="startChapter(3)"></button></div>
+    <div id="game-container" class="screen"><canvas id="gameCanvas"></canvas><div id="ui-overlay"><div id="touch-controls"><div class="joystick-area"><div class="touch-btn" id="btnL">◀</div><div class="touch-btn" id="btnR">▶</div></div><div class="action-area"><div class="touch-btn atk-btn" id="btnA1">HIT 1</div><div class="touch-btn atk-btn" id="btnA2">HIT 2</div><div class="touch-btn" id="btnJ">▲</div></div></div></div></div>
+    <div id="lose-screen" class="popup-screen"><div style="text-align:center; color:white;"><h1 style="font-size:60px; color:#e74c3c;">WASTED</h1><button class="home-btn" onclick="resetToMenu()">RETRY</button></div></div>
+    <div id="finish-screen" class="popup-screen"><div style="text-align:center; color:white;"><h1>SAGA COMPLETED</h1><button class="home-btn" onclick="resetToMenu()">MAIN MENU</button></div></div>
+
+<script>
+    const sounds = {
+        menu: new Audio('audio/menu.mp3'), bg: new Audio('audio/bg.mp3'), click: new Audio('audio/click.mp3'),
+        death: new Audio('audio/player-death.mp3'),
+        ghostLaughs: { 1: new Audio('audio/Ghost1-laugh.mp3'), 2: new Audio('audio/Ghost2-laugh.mp3'), 3: new Audio('audio/Ghost3-laugh.mp3') }
+    };
+    sounds.menu.loop = sounds.bg.loop = true;
+
+    const CONFIG = {
+        player: { speed: 4.2, jump: -16, gravity: 0.8, scale: 1.3, damageTaken: 7.7 }, // 13 hits to die
+        ghost: { speed: 2.8, scale: 1.4, hitDamage: 7.7, cooldownFrames: 600 }, // 10s cooldown
+        groundY: 0.82
+    };
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    let isRunning = false, currentChapter = 1, cameraX = 0;
+    const keys = { left: false, right: false, jump: false };
+    const images = { player: {}, map: new Image(), portal: new Image() };
+    let ghostImages = {}, player, ghosts = [], portal = { active: false, x: 0 };
+
+    class Entity {
+        constructor(isPlayer, gType = 1) {
+            this.isPlayer = isPlayer; this.gType = gType;
+            this.w = 128 * (isPlayer ? CONFIG.player.scale : CONFIG.ghost.scale);
+            this.h = 128 * (isPlayer ? CONFIG.player.scale : CONFIG.ghost.scale);
+            this.x = isPlayer ? 200 : -2000; this.y = 0;
+            this.vx = 0; this.vy = 0; this.health = 100;
+            this.state = isPlayer ? 'idle' : 'hidden';
+            this.frame = 0; this.tick = 0; this.facingRight = true;
+            this.isGrounded = false; this.isDead = false;
+            this.cooldown = isPlayer ? 0 : 180;
+        }
+
+        spawn() {
+            let side = Math.random() > 0.5 ? 300 : -300;
+            this.x = player.x + side;
+            if (this.x < 10) this.x = 10;
+            this.y = (canvas.height * CONFIG.groundY) - this.h;
+            this.state = 'spawning';
+            this.frame = 0; this.tick = 0;
+            this.facingRight = (player.x > this.x); // Face player on spawn
+            let laugh = sounds.ghostLaughs[this.gType];
+            if(laugh) { laugh.currentTime = 0; laugh.play().catch(()=>{}); }
+        }
+
+        draw() {
+            if (this.state === 'hidden' || (this.isDead && !this.isPlayer)) return;
+            const spriteSet = this.isPlayer ? images.player : ghostImages[this.gType];
+            let drawState = this.state;
+            let reverseAnim = false;
+
+            if (!this.isPlayer) {
+                if (this.state === 'spawning') drawState = 'inout';
+                if (this.state === 'despawning') { drawState = 'inout'; reverseAnim = true; }
+            }
+
+            const img = spriteSet[drawState] || spriteSet['idle'];
+            if (!img || !img.complete) return;
+
+            this.tick++;
+            if (this.tick > 6) {
+                this.tick = 0;
+                if (reverseAnim) {
+                    this.frame--;
+                    if (this.frame < 0) { this.state = 'hidden'; this.cooldown = CONFIG.ghost.cooldownFrames; }
+                } else {
+                    this.frame++;
+                    let max = (drawState === 'jump' ? 2 : (['atk1','atk2','dead','attack'].includes(drawState) ? 4 : 6));
+                    if (this.frame >= max) {
+                        if (this.isPlayer) {
+                            if (['atk1', 'atk2'].includes(this.state)) this.state = 'idle';
+                            else if (this.state === 'dead') this.frame = max - 1;
+                            else this.frame = 0;
+                        } else {
+                            if (this.state === 'spawning') this.state = 'walk';
+                            else if (this.state === 'attack') { this.state = 'despawning'; this.frame = 5; } // Attack then vanish
+                            else this.frame = 0;
+                        }
+                    }
+                }
+            }
+
+            ctx.save();
+            const dx = this.x - cameraX;
+            if (!this.facingRight) { ctx.translate(dx + this.w, this.y); ctx.scale(-1, 1); ctx.drawImage(img, this.frame * 128, 0, 128, 128, 0, 0, this.w, this.h); }
+            else { ctx.drawImage(img, this.frame * 128, 0, 128, 128, dx, this.y, this.w, this.h); }
+            ctx.restore();
+
+            if (this.health > 0) {
+                const bw = 40, bx = dx + (this.w/2) - 20, by = this.y + 10;
+                ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(bx, by, bw, 4);
+                ctx.fillStyle = '#e74c3c'; ctx.fillRect(bx, by, (this.health / 100) * bw, 4);
+            }
+        }
+    }
+
+    function enterHome() { showScreen('home-screen'); sounds.menu.play().catch(()=>{}); }
+    function openChapterMenu() { showScreen('chapter-menu'); }
+    function showScreen(id) { document.querySelectorAll('.screen').forEach(el => el.style.display = 'none'); document.getElementById(id).style.display = 'block'; }
+
+    function startChapter(num) {
+        currentChapter = num; isRunning = false; showScreen('game-container');
+        sounds.menu.pause(); sounds.bg.currentTime = 0; sounds.bg.play().catch(()=>{});
+        images.map.src = `maps/chapter_${num}map.png`; images.portal.src = `img/portal${num}.png`;
+        ['idle', 'walk', 'jump', 'atk1', 'atk2', 'dead'].forEach(s => { images.player[s] = new Image(); images.player[s].src = `sprites/${s.replace('atk', 'attack_')}.png`; });
+        ghostImages = {}; ghosts = [];
+        for (let i = 1; i <= num; i++) {
+            ghostImages[i] = {};
+            ['idle', 'walk', 'attack', 'inout'].forEach(s => { ghostImages[i][s] = new Image(); ghostImages[i][s].src = `Chapter_${i}_Ghost_sprite/${s}.png`; });
+            ghosts.push(new Entity(false, i));
+        }
+        images.map.onload = () => { player = new Entity(true); cameraX = 0; isRunning = true; resize(); requestAnimationFrame(gameLoop); };
+    }
+
+    function update() {
+        if (player.isDead) return;
+        player.vx = keys.left ? -CONFIG.player.speed : (keys.right ? CONFIG.player.speed : 0);
+        if (keys.left) player.facingRight = false; if (keys.right) player.facingRight = true;
+        if (keys.jump && player.isGrounded) { player.vy = CONFIG.player.jump; player.isGrounded = false; }
+        player.vy += CONFIG.player.gravity; player.x += player.vx; player.y += player.vy;
+        if (player.x < 0) player.x = 0;
+        const ground = canvas.height * CONFIG.groundY;
+        if (player.y + player.h > ground) { player.y = ground - player.h; player.vy = 0; player.isGrounded = true; }
+        if (!['atk1', 'atk2'].includes(player.state)) player.state = !player.isGrounded ? 'jump' : (player.vx !== 0 ? 'walk' : 'idle');
+        cameraX += (player.x - canvas.width * 0.4 - cameraX) * 0.15;
+        if (cameraX < 0) cameraX = 0;
+
+        ghosts.forEach(g => {
+            if (g.isDead) return;
+            if (g.state === 'hidden') { g.cooldown--; if (g.cooldown <= 0) g.spawn(); }
+            else if (g.state === 'walk') {
+                let d = player.x - g.x;
+                g.facingRight = d > 0;
+                if (Math.abs(d) > 70) g.x += (d > 0 ? 1 : -1) * CONFIG.ghost.speed;
+                else { g.state = 'attack'; g.frame = 0; }
+            } else if (g.state === 'attack' && g.frame === 2 && g.tick === 0) {
+                player.health -= CONFIG.player.damageTaken;
+            }
+            if (g.health <= 0) g.isDead = true;
+        });
+
+        if (player.health <= 0) { player.isDead = true; player.state = 'dead'; sounds.bg.pause(); sounds.death.play(); setTimeout(()=>document.getElementById('lose-screen').style.display='flex', 2000); }
+        if (ghosts.every(g => g.isDead) && !portal.active) { portal.active = true; portal.x = player.x + 500; }
+        if (portal.active && Math.abs(player.x - portal.x) < 50) { 
+            if (currentChapter < 3) startChapter(currentChapter + 1); 
+            else { isRunning = false; document.getElementById('finish-screen').style.display='flex'; }
+        }
+    }
+
+    function gameLoop() {
+        if (!isRunning && !player.isDead) return;
+        ctx.clearRect(0,0,canvas.width, canvas.height);
+        const sc = canvas.height / images.map.naturalHeight, sw = images.map.naturalWidth * sc;
+        ctx.drawImage(images.map, -(cameraX % sw), 0, sw, canvas.height);
+        ctx.drawImage(images.map, -(cameraX % sw) + sw, 0, sw, canvas.height);
+        if (portal.active) ctx.drawImage(images.portal, portal.x - cameraX, (canvas.height * CONFIG.groundY) - 180, 120, 180);
+        update(); player.draw(); ghosts.forEach(g => g.draw());
+        requestAnimationFrame(gameLoop);
+    }
+
+    function attack(type) {
+        if (player.isDead || ['atk1','atk2'].includes(player.state)) return;
+        player.state = type; player.frame = 0; sounds.click.currentTime = 0; sounds.click.play().catch(()=>{});
+        ghosts.forEach(g => {
+            if (!g.isDead && !['hidden','spawning','despawning'].includes(g.state) && Math.abs(player.x - g.x) < 110) {
+                g.health -= 7.7; // Ghost dies in 13 hits
+                g.x += player.facingRight ? 20 : -20;
+            }
+        });
+    }
+
+    function resetToMenu() { location.reload(); }
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.onresize = resize;
+
+    const bind = (id, k) => {
+        const el = document.getElementById(id);
+        el.ontouchstart = (e) => { e.preventDefault(); keys[k] = true; };
+        el.ontouchend = (e) => { e.preventDefault(); keys[k] = false; };
+    };
+    bind('btnL', 'left'); bind('btnR', 'right'); bind('btnJ', 'jump');
+    document.getElementById('btnA1').ontouchstart = (e) => { e.preventDefault(); attack('atk1'); };
+    document.getElementById('btnA2').ontouchstart = (e) => { e.preventDefault(); attack('atk2'); };
+</script>
+</body>
+</html>
