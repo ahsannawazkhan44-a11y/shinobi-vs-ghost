@@ -5,24 +5,37 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4 # Updated to v4
+      # 1. Repository se code fetch karna
+      - uses: actions/checkout@v4
 
+      # 2. Node.js setup karna
       - name: Setup Node.js
-        uses: actions/setup-node@v4 # Updated to v4
+        uses: actions/setup-node@v4
         with:
-          node-version: '20' # Faster Node version
+          node-version: '20'
 
+      # 3. Java setup karna (Android build ke liye zaruri hai)
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      # 4. Cordova install karna
       - name: Install Cordova
         run: npm install -g cordova
 
+      # 5. Android platform add karna
       - name: Add Android Platform
         run: cordova platform add android
 
+      # 6. APK build karna
       - name: Build APK
         run: cordova build android
 
+      # 7. Bani hui APK ko upload karna taaki tu download kar sake
       - name: Upload APK
-        uses: actions/upload-artifact@v4 # Updated to v4 (This was the error!)
+        uses: actions/upload-artifact@v4
         with:
-          name: Shinobi-APK
+          name: Shinobi-Saga-APK
           path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
